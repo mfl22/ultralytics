@@ -46,6 +46,12 @@ class RTDETRPredictor(BasePredictor):
             (list[Results]): A list of Results objects containing the post-processed bounding boxes, confidence scores,
                 and class labels.
         """
+        if type(self.args.conf) in [tuple, list]:
+            # separate confidences for each class
+            multi_conf = True
+        else:
+            multi_conf = False
+
         if not isinstance(preds, (list, tuple)):  # list for PyTorch inference but list[0] Tensor for export inference
             preds = [preds, None]
 
@@ -59,7 +65,13 @@ class RTDETRPredictor(BasePredictor):
         for i, bbox in enumerate(bboxes):  # (300, 4)
             bbox = ops.xywh2xyxy(bbox)
             score, cls = scores[i].max(-1, keepdim=True)  # (300, 1)
-            idx = score.squeeze(-1) > self.args.conf  # (300, )
+            if multi_conf:
+                # get confidence threshold for this class
+                conf_ = self.args.conf[cls]
+            else:
+                # the same confidence threshold for all classes
+                conf_ = self.args.conf
+            idx = score.squeeze(-1) > conf_  # (300, )
             if self.args.classes is not None:
                 idx = (cls == torch.tensor(self.args.classes, device=cls.device)).any(1) & idx
             pred = torch.cat([bbox, score, cls], dim=-1)[idx]  # filter
