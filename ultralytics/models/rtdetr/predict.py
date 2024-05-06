@@ -67,11 +67,20 @@ class RTDETRPredictor(BasePredictor):
             score, cls = scores[i].max(-1, keepdim=True)  # (300, 1)
             if multi_conf:
                 # get confidence threshold for this class
-                conf_ = self.args.conf[cls]
+                if cls.device.type == 'cpu':
+                    # conf_ = cls.apply_(
+                    #     lambda class_ind: self.args.conf[class_ind]
+                    # ).squeeze(-1)
+                    conf_ = torch.tensor([
+                        self.args.conf[class_ind] for class_ind in
+                        cls.squeeze()
+                    ])
+                else:
+                    conf_ = self.args.conf[0]
             else:
                 # the same confidence threshold for all classes
                 conf_ = self.args.conf
-            idx = score.squeeze(-1) > conf_  # (300, )
+            idx = score.squeeze(-1).gt(conf_)  # (300, )
             if self.args.classes is not None:
                 idx = (cls == torch.tensor(self.args.classes, device=cls.device)).any(1) & idx
             pred = torch.cat([bbox, score, cls], dim=-1)[idx]  # filter

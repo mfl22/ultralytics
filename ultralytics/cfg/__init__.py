@@ -117,7 +117,7 @@ CFG_FRACTION_KEYS = {
     "mosaic",
     "mixup",
     "copy_paste",
-    "conf",
+    # "conf",
     "iou",
     "fraction",
 }  # fraction floats 0.0 - 1.0
