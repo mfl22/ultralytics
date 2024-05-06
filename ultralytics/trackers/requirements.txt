@@ -1,0 +1,3 @@
+motmetrics
+# git+https://github.com/cheind/py-motmetrics.git  # more recent dev version
+# git@github.com:Megvii-BaseDetection/YOLOX.git  # yolox not used here

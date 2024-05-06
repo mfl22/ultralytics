@@ -10,9 +10,11 @@ from ultralytics.utils.checks import check_yaml
 
 from .bot_sort import BOTSORT
 from .byte_tracker import BYTETracker
+from .bot_sort2 import BOTSORT as BOTSORT_reid
 
 # A mapping of tracker types to corresponding tracker classes
-TRACKER_MAP = {"bytetrack": BYTETracker, "botsort": BOTSORT}
+TRACKER_MAP = {"bytetrack": BYTETracker, "botsort": BOTSORT,
+               "botsort2": BOTSORT_reid}
 
 
 def on_predict_start(predictor: object, persist: bool = False) -> None:
@@ -32,8 +34,11 @@ def on_predict_start(predictor: object, persist: bool = False) -> None:
     tracker = check_yaml(predictor.args.tracker)
     cfg = IterableSimpleNamespace(**yaml_load(tracker))
 
-    if cfg.tracker_type not in {"bytetrack", "botsort"}:
-        raise AssertionError(f"Only 'bytetrack' and 'botsort' are supported for now, but got '{cfg.tracker_type}'")
+    if cfg.tracker_type not in {"bytetrack", "botsort", "botsort2"}:
+        raise AssertionError(
+            f"Only 'bytetrack' and 'botsort'/'botsort2'"
+            f" (w/wo reid) are supported for now, but got '{cfg.tracker_type}'"
+        )
 
     trackers = []
     for _ in range(predictor.dataset.bs):
