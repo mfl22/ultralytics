@@ -416,7 +416,8 @@ class RandomPerspective:
     """
 
     def __init__(
-        self, degrees=0.0, translate=0.1, scale=0.5, shear=0.0, perspective=0.0, border=(0, 0), pre_transform=None
+        self, degrees=0.0, translate=0.1, scale=0.5,
+        shear=0.0, perspective=0.0, border=(0, 0), pre_transform=None
     ):
         """Initializes RandomPerspective object with transformation parameters."""
 
@@ -1361,7 +1362,7 @@ def custom_v8_transforms(dataset, imgsz, hyp, stretch=False):
             # add custom crop augment.
             # NOTE: config yaml has to have corresponding parameters
             CustomCrop(
-                crop_size=hyp.imgsz // 2,
+                crop_size=hyp.imgsz // 4,
                 p=hyp.custom_crop,
                 class_id=hyp.crop_class_id,
             ),
