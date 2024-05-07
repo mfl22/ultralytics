@@ -1,13 +1,14 @@
-from pathlib import Path
+# from pathlib import Path
+from time import time
 
 import torch
 from torchreid.utils import FeatureExtractor
 
 # path to pretrained feature extractor (Re-ID) model
-MODEL_PATH = Path.home().joinpath(
-    'projekti/upwork/tracking/git/deep-person-reid/checkpoints/'
-    'osnet_x1_0_imagenet.pth'
-)
+# MODEL_PATH = Path.cwd().joinpath(
+#     'deep-person-reid/checkpoints/'
+#     'osnet_x1_0_imagenet.pth'
+# )
 
 
 class FeatureExtractorClass:
@@ -53,13 +54,26 @@ class FeatureExtractorClass:
             img - input image (not used here)
             dets - detections (crops / bounding boxes of objects)
         """
-        features = self.extract_features(dets)
+        print('Inferencing...')
+        st_time = time()
+        # Extract detections as image crops
+        det_crops = []
+        for det in dets:
+            x1, y1, w, h = [int(el) for el in det[:4]]
+            det_crop = img[y1:y1+h, x1:x1+w, :]
+            det_crops.append(det_crop)
+
+        features = self.extract_features(det_crops)
+
+        el_time = time() - st_time
+
+        print(f'Done. Time: {el_time:.3f} f')
 
         return features
 
 
 # create extractor
-MyFeatureExtractor = FeatureExtractorClass(model_path=MODEL_PATH)
+TorchReIDFeatureExtractor = FeatureExtractorClass()  # model_path=MODEL_PATH)
 
 
 if __name__ == '__main__':
