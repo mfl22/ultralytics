@@ -16,27 +16,52 @@ from torch.utils.data import ConcatDataset
 from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr
 from ultralytics.utils.ops import resample_segments
 
-from .augment import (
-    Compose,
-    Format,
-    Instances,
-    LetterBox,
-    RandomLoadText,
-    classify_augmentations,
-    classify_transforms,
-    v8_transforms,
-)
-from .base import BaseDataset
-from .utils import (
-    HELP_URL,
-    LOGGER,
-    get_hash,
-    img2label_paths,
-    load_dataset_cache_file,
-    save_dataset_cache_file,
-    verify_image,
-    verify_image_label,
-)
+try:
+    from .augment import (
+        Compose,
+        Format,
+        Instances,
+        LetterBox,
+        RandomLoadText,
+        classify_augmentations,
+        classify_transforms,
+        v8_transforms,
+        custom_v8_transforms,
+    )
+    from .base import BaseDataset
+    from .utils import (
+        HELP_URL,
+        LOGGER,
+        get_hash,
+        img2label_paths,
+        load_dataset_cache_file,
+        save_dataset_cache_file,
+        verify_image,
+        verify_image_label,
+    )
+except ImportError:
+    from data.augment import (
+        Compose,
+        Format,
+        Instances,
+        LetterBox,
+        RandomLoadText,
+        classify_augmentations,
+        classify_transforms,
+        v8_transforms,
+        custom_v8_transforms,
+    )
+    from data.base import BaseDataset
+    from data.utils import (
+        HELP_URL,
+        LOGGER,
+        get_hash,
+        img2label_paths,
+        load_dataset_cache_file,
+        save_dataset_cache_file,
+        verify_image,
+        verify_image_label,
+    )
 
 # Ultralytics dataset *.cache version, >= 1.0.0 for YOLOv8
 DATASET_CACHE_VERSION = "1.0.3"
@@ -176,7 +201,8 @@ class YOLODataset(BaseDataset):
         if self.augment:
             hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
-            transforms = v8_transforms(self, self.imgsz, hyp)
+            # transforms = v8_transforms(self, self.imgsz, hyp)
+            transforms = custom_v8_transforms(self, self.imgsz, hyp)
         else:
             transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
         transforms.append(
@@ -504,3 +530,44 @@ class ClassificationDataset:
         x["msgs"] = msgs  # warnings
         save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
         return samples
+
+
+def visualize_augmentations(dataset_loader):
+    import matplotlib.pyplot as plt
+
+    pbar = enumerate(dataset_loader)
+    for i, batch in pbar:
+        if i > 10:
+            break
+        batch_size = batch['img'].shape[0]
+        nrows, ncols = (4, 4)  #  if batch_size >= 4 else (1, 1)
+        fig, ax = plt.subplots(nrows, ncols, figsize=(20, 10))
+
+        plt.tight_layout()
+
+        for ind, img_t in enumerate(batch['img']):
+            ii = ind // ncols
+            jj = ind % ncols
+            if ii >= nrows or jj >= ncols:
+                break
+            img = img_t.cpu().numpy().transpose((1, 2, 0))
+            ax[ii, jj].imshow(img)
+            ax[ii, jj].axis('off')
+            ax[ii, jj].set_title('Example augmentation')
+
+        plt.show()
+
+
+if __name__ == '__main__':
+
+    # visualize augmentations
+    from ultralytics import YOLO
+    model = YOLO('yolov8s.pt')
+
+    data_file = 'bball.yaml'
+    data_file = Path.cwd().joinpath(data_file).resolve().as_posix()
+
+    # get dataset
+    dataloader = model.get_vis_dataloader(data=data_file)
+
+    visualize_augmentations(dataloader)

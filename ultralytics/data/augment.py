@@ -17,6 +17,8 @@ from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.ops import segment2box, xyxyxyxy2xywhr
 from ultralytics.utils.torch_utils import TORCHVISION_0_10, TORCHVISION_0_11, TORCHVISION_0_13
 
+import matplotlib.pyplot as plt
+
 from .utils import polygons2masks, polygons2masks_overlap
 
 DEFAULT_MEAN = (0.0, 0.0, 0.0)
@@ -626,6 +628,227 @@ class RandomPerspective:
         return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
 
 
+class CustomCrop(RandomPerspective):
+
+    def __init__(self, crop_size, p, class_id):
+
+        super(CustomCrop, self).__init__()
+
+        # import torchvision.transforms.v2 as Ttorch
+
+        if type(crop_size) in [int, float]:
+            self.crop_size = (crop_size, crop_size)
+        else:
+            self.crop_size = crop_size
+
+        self.p = p
+
+        # id of class to use for cropping
+        # we use the ball here
+        self.class_id = class_id
+
+    def __call__(self, labels):
+
+        if random.uniform(0, 1) > self.p:
+            return labels
+
+        img = labels["img"]
+
+        h, w = img.shape[:2]
+        self.size = (w, h)
+
+        instances = labels.pop("instances")
+        instances.convert_bbox(format="xyxy")
+        instances.denormalize(*img.shape[:2][::-1])
+
+        # get box classes
+        cls = labels["cls"]
+
+        try:
+            relevant_ind = np.nonzero(np.array(cls) == self.class_id)[0][0]
+        except IndexError:
+            labels['instances'] = instances
+            return labels
+
+        # bbox = instances._bboxes.bboxes[relevant_ind]
+        bbox = instances.bboxes[relevant_ind]
+        print('relevant bbox: ', bbox)
+        # xb, yb, wb, hb = bbox
+        xc, yc, _, _ = bbox
+
+        # get center point
+        # xc = int(xb + wb/2)
+        # yc = int(yb + hb/2)
+        # center = (xc, yc)
+
+        cx, cy = w // 2, h // 2
+        t = (cx - xc, cy - yc)
+
+        # Crop around center
+        # call: translate + center_crop
+        img, T = self.translate_im(img, t)
+
+        # Transform labels
+        bboxes = self.apply_bboxes(instances.bboxes, T)
+
+        print(bboxes)
+
+        # im_show = img.copy()
+        # for bbox in bboxes:
+        #     x1, y1, x2, y2 = [int(el) for el in bbox]
+        #     im_show = cv2.rectangle(im_show, (x1, y1), (x2, y2),
+        #                             (255, 0, 0), 3)
+        # plt.imshow(im_show[..., ::-1])
+        # plt.title('translation with transformed bboxes')
+        # plt.axis('off')
+        # plt.show()
+
+        segments = instances.segments
+        keypoints = instances.keypoints
+        # Update bboxes if there are segments.
+        if len(segments):
+            bboxes, segments = self.apply_segments(segments, T)
+
+        if keypoints is not None:
+            keypoints = self.apply_keypoints(keypoints, T)
+
+        new_instances = Instances(
+            bboxes, segments, keypoints,
+            bbox_format="xyxy", normalized=False
+        )
+
+        # Make the bboxes have the same scale with new_bboxes
+        i = self.box_candidates(
+            box1=instances.bboxes.T, box2=new_instances.bboxes.T,
+            area_thr=0.01 if len(segments) else 0.10,
+        )
+        labels["instances"] = new_instances[i]
+        labels["cls"] = cls[i]
+        labels["img"] = img
+        labels["resized_shape"] = img.shape[:2]
+
+        # Center crop
+        labels = self.center_crop(labels)
+
+        return labels
+
+    def translate_im(self, img, t):
+        # Translation
+        T = np.eye(3, dtype=np.float32)
+        T[0, 2] = t[0]  # x translation (pixels)
+        T[1, 2] = t[1]  # y translation (pixels)
+
+        # print('Translation: ', t)
+
+        h, w = img.shape[:2]
+
+        img = cv2.warpAffine(
+            img, T[:2],
+            dsize=(w, h),
+            borderValue=(114, 114, 114),
+        )
+
+        return img, T
+
+    def center_crop(self, labels):
+        """
+        Center crop.
+
+        NOTE: only works for detection for now (no segments) !
+        (TODO)
+        """
+        from torchvision import tv_tensors
+        import torchvision.transforms.v2 as Ttorch
+        tr = Ttorch.CenterCrop(self.crop_size)
+
+        img = labels["img"]
+
+#         plt.imshow(img[..., ::-1])
+#         plt.title('before')
+#         plt.axis('off')
+#         plt.show()
+
+        instances = labels.pop("instances")
+        instances.convert_bbox(format="xyxy")
+        # instances.denormalize(*img.shape[:2][::-1])
+
+        # NOTE: format is wh
+        bboxes = instances.bboxes
+        # convert to hw
+        # if len(bboxes):
+        #     bboxes = np.array(bboxes)[..., [1, 0, 3, 2]]
+
+        cls = labels["cls"]
+
+        segments = instances.segments
+        keypoints = instances.keypoints
+
+        # NOTE: for torchvision, format of bboxes is hw !
+        in_dict = {
+            'image': torch.tensor(img.transpose((2, 0, 1))),
+            # 'bboxes': bboxes,
+            # 'masks': ...,
+        }
+        h, w = img.shape[:2]
+        if len(bboxes):
+            boxes_t = tv_tensors.BoundingBoxes(
+                bboxes,
+                format="XYXY", canvas_size=(h, w),
+            )
+            in_dict.update(
+                {'bboxes': boxes_t}
+            )
+
+        out_dict = tr(in_dict)
+
+        img = out_dict['image'].numpy().squeeze().transpose((1, 2, 0))
+
+        # plt.imshow(img[..., ::-1])
+        # plt.title('after center crop')
+        # plt.axis('off')
+        # plt.show()
+
+        if len(bboxes):
+            bboxes = out_dict['bboxes'].numpy().squeeze()
+
+            # convert back from hw to wh
+            # bboxes = np.array(bboxes)[..., [1, 0, 3, 2]]
+            # print(bboxes.shape)
+
+        im_show = img.copy()
+        for bbox in bboxes:
+            x1, y1, x2, y2 = [int(el) for el in bbox]
+            im_show = cv2.rectangle(im_show, (x1, y1), (x2, y2),
+                                    (255, 0, 0), 3)
+        plt.imshow(im_show[..., ::-1])
+        plt.title('center crop with transformed bboxes')
+        plt.axis('off')
+        plt.show()
+
+        # segments and keypoints - not implemented
+        new_instances = Instances(
+            bboxes if len(bboxes) else instances.bboxes,
+            segments, keypoints,
+            bbox_format="xyxy", normalized=False
+        )
+
+        # define transformed labels dict
+
+        # Make the bboxes have the same scale with new_bboxes
+        i = self.box_candidates(
+            box1=instances.bboxes.T, box2=new_instances.bboxes.T,
+            area_thr=0.01 if len(segments) else 0.10,
+        )
+        labels["instances"] = new_instances[i]
+        labels["cls"] = cls[i]
+        labels["img"] = img
+        labels["resized_shape"] = img.shape[:2]
+
+        print('APPLIED CUSTOM CROP !')
+
+        return labels
+
+
 class RandomHSV:
     """
     This class is responsible for performing random adjustments to the Hue, Saturation, and Value (HSV) channels of an
@@ -1101,6 +1324,51 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
     """Convert images to a size suitable for YOLOv8 training."""
     pre_transform = Compose(
         [
+            Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
+            CopyPaste(p=hyp.copy_paste),
+            RandomPerspective(
+                degrees=hyp.degrees,
+                translate=hyp.translate,
+                scale=hyp.scale,
+                shear=hyp.shear,
+                perspective=hyp.perspective,
+                pre_transform=None if stretch else LetterBox(new_shape=(imgsz, imgsz)),
+            ),
+        ]
+    )
+    flip_idx = dataset.data.get("flip_idx", [])  # for keypoints augmentation
+    if dataset.use_keypoints:
+        kpt_shape = dataset.data.get("kpt_shape", None)
+        if len(flip_idx) == 0 and hyp.fliplr > 0.0:
+            hyp.fliplr = 0.0
+            LOGGER.warning("WARNING ⚠️ No 'flip_idx' array defined in data.yaml, setting augmentation 'fliplr=0.0'")
+        elif flip_idx and (len(flip_idx) != kpt_shape[0]):
+            raise ValueError(f"data.yaml flip_idx={flip_idx} length must be equal to kpt_shape[0]={kpt_shape[0]}")
+
+    return Compose(
+        [
+            pre_transform,
+            MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
+            Albumentations(p=1.0),
+            RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
+            RandomFlip(direction="vertical", p=hyp.flipud),
+            RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
+        ]
+    )  # transforms
+
+
+def custom_v8_transforms(dataset, imgsz, hyp, stretch=False):
+    """Convert images to a size suitable for YOLOv8 training."""
+    pre_transform = Compose(
+        [
+            # add custom crop augment.
+            # NOTE: config yaml has to have corresponding parameters
+            CustomCrop(
+                crop_size=hyp.imgsz // 2,
+                p=hyp.custom_crop,
+                class_id=hyp.crop_class_id,
+            ),
+            # default
             Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
             CopyPaste(p=hyp.copy_paste),
             RandomPerspective(
