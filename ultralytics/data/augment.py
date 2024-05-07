@@ -672,7 +672,6 @@ class CustomCrop(RandomPerspective):
 
         # bbox = instances._bboxes.bboxes[relevant_ind]
         bbox = instances.bboxes[relevant_ind]
-        print('relevant bbox: ', bbox)
         # xb, yb, wb, hb = bbox
         xc, yc, _, _ = bbox
 
@@ -690,8 +689,6 @@ class CustomCrop(RandomPerspective):
 
         # Transform labels
         bboxes = self.apply_bboxes(instances.bboxes, T)
-
-        print(bboxes)
 
         # im_show = img.copy()
         # for bbox in bboxes:
@@ -815,15 +812,15 @@ class CustomCrop(RandomPerspective):
             # bboxes = np.array(bboxes)[..., [1, 0, 3, 2]]
             # print(bboxes.shape)
 
-        im_show = img.copy()
-        for bbox in bboxes:
-            x1, y1, x2, y2 = [int(el) for el in bbox]
-            im_show = cv2.rectangle(im_show, (x1, y1), (x2, y2),
-                                    (255, 0, 0), 3)
-        plt.imshow(im_show[..., ::-1])
-        plt.title('center crop with transformed bboxes')
-        plt.axis('off')
-        plt.show()
+        # im_show = img.copy()
+        # for bbox in bboxes:
+        #     x1, y1, x2, y2 = [int(el) for el in bbox]
+        #     im_show = cv2.rectangle(im_show, (x1, y1), (x2, y2),
+        #                             (255, 0, 0), 3)
+        # plt.imshow(im_show[..., ::-1])
+        # plt.title('center crop with transformed bboxes')
+        # plt.axis('off')
+        # plt.show()
 
         # segments and keypoints - not implemented
         new_instances = Instances(
@@ -844,7 +841,7 @@ class CustomCrop(RandomPerspective):
         labels["img"] = img
         labels["resized_shape"] = img.shape[:2]
 
-        print('APPLIED CUSTOM CROP !')
+        # print('APPLIED CUSTOM CROP !')
 
         return labels
 
