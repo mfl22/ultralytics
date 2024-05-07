@@ -9,6 +9,12 @@ import os.path as osp
 import torchreid
 from torchreid.data import ImageDataset
 
+# import ultralytics.trackers.feature_extraction as feature_extraction
+
+
+# get extractor (already initialized at import)
+# EXTRACTOR = feature_extraction.TorchReIDFeatureExtractor
+
 
 class CustomDataset(ImageDataset):
     dataset_dir = 'new_dataset'

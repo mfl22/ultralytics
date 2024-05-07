@@ -11,6 +11,16 @@ from .utils.gmc import GMC
 from .utils.kalman_filter import KalmanFilterXYWH
 
 
+# -----------------------------------------------------------------------------
+
+# load feature extractor for re-id
+import ultralytics.trackers.feature_extraction as feature_extraction
+
+ENCODER = feature_extraction.TorchReIDFeatureExtractor
+
+# -----------------------------------------------------------------------------
+
+
 class BOTrack(STrack):
     """
     An extended version of the STrack class for YOLOv8,
@@ -179,7 +189,9 @@ class BOTSORT(BYTETracker):
         The class is designed to work with the YOLOv8 object detection model and supports ReID only if enabled via args.
     """
 
-    def __init__(self, args, encoder=None, frame_rate=30):
+    def __init__(self, args,
+                 encoder=ENCODER,
+                 person_class_id=0,  frame_rate=30):
         """Initialize YOLOv8 object with ReID module and GMC algorithm."""
         super().__init__(args, frame_rate)
         # ReID module
@@ -195,6 +207,11 @@ class BOTSORT(BYTETracker):
                 print('Warning: not using reid ! Encoder required.')
             self.encoder = encoder
 
+            print('bot-sort tracker successfully initialized !\n')
+            print(f'using feature extractor: {encoder}')
+
+        self.person_class_id = person_class_id
+
         self.gmc = GMC(method=args.gmc_method)
 
     def get_kalmanfilter(self):
@@ -206,25 +223,76 @@ class BOTSORT(BYTETracker):
         if len(dets) == 0:
             return []
         if self.args.with_reid and self.encoder is not None:
+            # use person reid only for people :)
+            p_ids = np.nonzero(np.array(cls) == self.person_class_id)[0]
+
+            # TODO: only extract needed features (person class id)
             features_keep = self.encoder.inference(img, dets)
-            return [BOTrack(xyxy, s, c, f) for (xyxy, s, c, f) in zip(dets, scores, cls, features_keep)]  # detections
+            return [
+                BOTrack(xyxy, s, c, f) if ind in p_ids
+                else BOTrack(xyxy, s, c)
+                for ind, (xyxy, s, c, f) in
+                enumerate(zip(dets, scores, cls, features_keep))
+            ]  # detections
         else:
-            return [BOTrack(xyxy, s, c) for (xyxy, s, c) in zip(dets, scores, cls)]  # detections
+            return [
+                BOTrack(xyxy, s, c) for (xyxy, s, c) in zip(dets, scores, cls)
+            ]  # detections
 
     def get_dists(self, tracks, detections):
-        """Get distances between tracks and detections using IoU and (optionally) ReID embeddings."""
+        """
+        Get distances between tracks and detections using IoU and
+        (optionally) ReID embeddings.
+        """
+
+        # 1. distances based on IoU
         dists = matching.iou_distance(tracks, detections)
         dists_mask = dists > self.proximity_thresh
+
+        # only for person detections, use association distance too
+        # TODO: is this the good way to handle multiple classes ?
+        cls_ids_tracks = np.nonzero(
+            [track.cls == self.person_class_id for track in tracks]
+        )[0]
+        cls_ids = np.nonzero(
+            [det.cls == self.person_class_id for det in detections]
+        )[0]
 
         # TODO: mot20
         # if not self.args.mot20:
         dists = matching.fuse_score(dists, detections)
 
+        # 2. embedding distance for subsets of tracks and detections
+        # with self.person_class_id
+
         if self.args.with_reid and self.encoder is not None:
-            emb_dists = matching.embedding_distance(tracks, detections) / 2.0
+            # extract relevant tracks and detections
+            relevant_tracks = [
+                track for ind, track in enumerate(tracks)
+                if ind in cls_ids_tracks
+            ]
+            relevant_dets = [
+                det for ind, det in enumerate(detections)
+                if ind in cls_ids
+            ]
+            # embedding distances for relevant tracks and detections
+            # NOTE: emb-dists shape is:
+            # (len(relevant_tracks), len(relevant_dets))
+            emb_dists = matching.embedding_distance(
+                relevant_tracks, relevant_dets
+            ) / 2.0
+            # clip large
             emb_dists[emb_dists > self.appearance_thresh] = 1.0
-            emb_dists[dists_mask] = 1.0
-            dists = np.minimum(dists, emb_dists)
+            # if IoU already bad, don't even look at embedding distance
+            # (NOTE: here we also have to index into relevant tracks and
+            # detections)
+            emb_dists[dists_mask[cls_ids_tracks][:, cls_ids]] = 1.0
+            # update dists only for relevant tracks and detections
+            # (update sub-array)
+            dists[cls_ids_tracks][:, cls_ids] = np.minimum(
+                dists[cls_ids_tracks][:, cls_ids],
+                emb_dists
+            )
         return dists
 
     def multi_predict(self, tracks):
@@ -235,3 +303,140 @@ class BOTSORT(BYTETracker):
         """Reset tracker."""
         super().reset()
         self.gmc.reset_params()
+
+    def update(self, results, img):
+        """
+        Update tracker with new detections.
+
+        This is overriden from super-class (ByteTracker) update() method.
+        """
+        self.frame_id += 1
+        activated_stracks = []
+        refind_stracks = []
+        lost_stracks = []
+        removed_stracks = []
+
+        scores = results.conf
+        bboxes = results.xywhr if hasattr(results, "xywhr") else results.xywh
+        # Add bbox index
+        bboxes = np.concatenate(
+            [bboxes, np.arange(len(bboxes)).reshape(-1, 1)], axis=-1
+        )
+        cls = results.cls
+
+        remain_inds = scores >= self.args.track_high_thresh
+        inds_low = scores > self.args.track_low_thresh
+        inds_high = scores < self.args.track_high_thresh
+
+        inds_second = inds_low & inds_high
+        dets_second = bboxes[inds_second]
+        dets = bboxes[remain_inds]
+        scores_keep = scores[remain_inds]
+        scores_second = scores[inds_second]
+        cls_keep = cls[remain_inds]
+        cls_second = cls[inds_second]
+
+        # Extract embeddings
+        # NOTE: this is done in init_track()
+        # if self.args.with_reid:
+        #     features_keep = self.encoder.inference(img, dets)
+
+        detections = self.init_track(dets, scores_keep, cls_keep, img)
+        # Add newly detected tracklets to tracked_stracks
+        unconfirmed = []
+        tracked_stracks = []  # type: list[STrack]
+        for track in self.tracked_stracks:
+            if not track.is_activated:
+                unconfirmed.append(track)
+            else:
+                tracked_stracks.append(track)
+
+        # Step 2: First association, with high score detection boxes
+        strack_pool = self.joint_stracks(tracked_stracks, self.lost_stracks)
+        # Predict the current location with KF
+        self.multi_predict(strack_pool)
+        if hasattr(self, "gmc") and img is not None:
+            warp = self.gmc.apply(img, dets)
+            STrack.multi_gmc(strack_pool, warp)
+            STrack.multi_gmc(unconfirmed, warp)
+
+        # get dists
+        # NOTE: iou and reid included (if reid set)
+
+        dists = self.get_dists(strack_pool, detections)
+
+        # assignment based on (1) iou dist. (motion) and (2) association (reid)
+
+        matches, u_track, u_detection = matching.linear_assignment(
+            dists, thresh=self.args.match_thresh
+        )
+
+        for itracked, idet in matches:
+            track = strack_pool[itracked]
+            det = detections[idet]
+            if track.state == TrackState.Tracked:
+                track.update(det, self.frame_id)
+                activated_stracks.append(track)
+            else:
+                track.re_activate(det, self.frame_id, new_id=False)
+                refind_stracks.append(track)
+
+        # Step 3: Second association, with low score detection boxes association the untrack to the low score detections
+        detections_second = self.init_track(dets_second, scores_second, cls_second, img)
+        r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
+        # TODO
+        dists = matching.iou_distance(r_tracked_stracks, detections_second)
+        matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
+        for itracked, idet in matches:
+            track = r_tracked_stracks[itracked]
+            det = detections_second[idet]
+            if track.state == TrackState.Tracked:
+                track.update(det, self.frame_id)
+                activated_stracks.append(track)
+            else:
+                track.re_activate(det, self.frame_id, new_id=False)
+                refind_stracks.append(track)
+
+        for it in u_track:
+            track = r_tracked_stracks[it]
+            if track.state != TrackState.Lost:
+                track.mark_lost()
+                lost_stracks.append(track)
+        # Deal with unconfirmed tracks, usually tracks with only one beginning frame
+        detections = [detections[i] for i in u_detection]
+        dists = self.get_dists(unconfirmed, detections)
+        matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
+        for itracked, idet in matches:
+            unconfirmed[itracked].update(detections[idet], self.frame_id)
+            activated_stracks.append(unconfirmed[itracked])
+        for it in u_unconfirmed:
+            track = unconfirmed[it]
+            track.mark_removed()
+            removed_stracks.append(track)
+
+        # Step 4: Init new stracks
+        for inew in u_detection:
+            track = detections[inew]
+            if track.score < self.args.new_track_thresh:
+                continue
+            track.activate(self.kalman_filter, self.frame_id)
+            activated_stracks.append(track)
+
+        # Step 5: Update state
+        for track in self.lost_stracks:
+            if self.frame_id - track.end_frame > self.max_time_lost:
+                track.mark_removed()
+                removed_stracks.append(track)
+
+        self.tracked_stracks = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
+        self.tracked_stracks = self.joint_stracks(self.tracked_stracks, activated_stracks)
+        self.tracked_stracks = self.joint_stracks(self.tracked_stracks, refind_stracks)
+        self.lost_stracks = self.sub_stracks(self.lost_stracks, self.tracked_stracks)
+        self.lost_stracks.extend(lost_stracks)
+        self.lost_stracks = self.sub_stracks(self.lost_stracks, self.removed_stracks)
+        self.tracked_stracks, self.lost_stracks = self.remove_duplicate_stracks(self.tracked_stracks, self.lost_stracks)
+        self.removed_stracks.extend(removed_stracks)
+        if len(self.removed_stracks) > 1000:
+            self.removed_stracks = self.removed_stracks[-999:]  # clip remove stracks to 1000 maximum
+
+        return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
