@@ -757,6 +757,8 @@ class CustomCrop(RandomPerspective):
         """
         from torchvision import tv_tensors
         import torchvision.transforms.v2 as Ttorch
+        from torch import device
+        device = device('cpu')
         tr = Ttorch.CenterCrop(self.crop_size)
 
         img = labels["img"]
@@ -783,7 +785,7 @@ class CustomCrop(RandomPerspective):
 
         # NOTE: for torchvision, format of bboxes is hw !
         in_dict = {
-            'image': torch.tensor(img.transpose((2, 0, 1))),
+            'image': torch.tensor(img.transpose((2, 0, 1)), device=device),
             # 'bboxes': bboxes,
             # 'masks': ...,
         }
@@ -792,6 +794,7 @@ class CustomCrop(RandomPerspective):
             boxes_t = tv_tensors.BoundingBoxes(
                 bboxes,
                 format="XYXY", canvas_size=(h, w),
+                device=device,
             )
             in_dict.update(
                 {'bboxes': boxes_t}
