@@ -631,7 +631,7 @@ class RandomPerspective:
 
 class CustomCrop(RandomPerspective):
 
-    def __init__(self, crop_size, p, class_id):
+    def __init__(self, crop_size, size, p, class_id, resize=False):
 
         super(CustomCrop, self).__init__()
 
@@ -641,6 +641,9 @@ class CustomCrop(RandomPerspective):
             self.crop_size = (crop_size, crop_size)
         else:
             self.crop_size = crop_size
+
+        self.size = size
+        self.resize = resize
 
         self.p = p
 
@@ -759,9 +762,21 @@ class CustomCrop(RandomPerspective):
         import torchvision.transforms.v2 as Ttorch
         from torch import device
         device = device('cpu')
-        tr = Ttorch.CenterCrop(self.crop_size)
+        tr_cc = Ttorch.CenterCrop(self.crop_size)
 
         img = labels["img"]
+
+        t_res = Ttorch.Resize(self.size)
+
+        if self.resize:
+            tr = Ttorch.Compose(
+                [
+                    tr_cc,
+                    t_res,
+                ]
+            )
+        else:
+            tr = tr_cc
 
 #         plt.imshow(img[..., ::-1])
 #         plt.title('before')
@@ -1366,8 +1381,10 @@ def custom_v8_transforms(dataset, imgsz, hyp, stretch=False):
             # NOTE: config yaml has to have corresponding parameters
             CustomCrop(
                 crop_size=hyp.imgsz // 4,
+                size=hyp.imgsz,
                 p=hyp.custom_crop,
                 class_id=hyp.crop_class_id,
+                resize=True if stretch else False,
             ),
             # default
             Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),

@@ -3,7 +3,11 @@
 import torch
 
 from ultralytics.data import YOLODataset
-from ultralytics.data.augment import Compose, Format, v8_transforms
+from ultralytics.data.augment import (
+    Compose, Format,
+    # v8_transforms,
+    custom_v8_transforms,
+)
 from ultralytics.models.yolo.detect import DetectionValidator
 from ultralytics.utils import colorstr, ops
 
@@ -32,7 +36,10 @@ class RTDETRDataset(YOLODataset):
         if self.augment:
             hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
-            transforms = v8_transforms(self, self.imgsz, hyp, stretch=True)
+            # transforms = v8_transforms(self, self.imgsz, hyp, stretch=True)
+            transforms = custom_v8_transforms(
+                self, self.imgsz, hyp, stretch=True
+            )
         else:
             # transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), auto=False, scaleFill=True)])
             transforms = Compose([])

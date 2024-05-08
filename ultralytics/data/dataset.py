@@ -561,8 +561,9 @@ def visualize_augmentations(dataset_loader):
 if __name__ == '__main__':
 
     # visualize augmentations
-    from ultralytics import YOLO
-    model = YOLO('yolov8s.pt')
+    from ultralytics import YOLO, RTDETR
+    # model = YOLO('yolov8s.pt')
+    model = RTDETR('rtdetr-l.pt')
 
     data_file = 'bball.yaml'
     data_file = Path.cwd().joinpath(data_file).resolve().as_posix()
