@@ -67,7 +67,7 @@ class FeatureExtractorClass:
 
         el_time = time() - st_time
 
-        print(f'Done. Time: {el_time:.3f} f')
+        print(f'Done. Time: {el_time:.3f} s')
 
         return features
 

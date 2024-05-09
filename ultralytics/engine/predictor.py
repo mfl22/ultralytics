@@ -255,6 +255,11 @@ class BasePredictor:
                     self.results = self.postprocess(preds, im, im0s)
                 self.run_callbacks("on_predict_postprocess_end")
 
+                if 'frame_ind' in kwargs.keys():
+                    frame_ind = kwargs['frame_ind']
+                else:
+                    frame_ind = None
+
                 # Visualize, save, write results
                 n = len(im0s)
                 for i in range(n):
@@ -265,7 +270,10 @@ class BasePredictor:
                         "postprocess": profilers[2].dt * 1e3 / n,
                     }
                     if self.args.verbose or self.args.save or self.args.save_txt or self.args.show:
-                        s[i] += self.write_results(i, Path(paths[i]), im, s)
+                        s[i] += self.write_results(
+                            i, Path(paths[i]), im, s,
+                            frame_ind=frame_ind,
+                        )
 
                 # Print batch results
                 if self.args.verbose:
@@ -309,7 +317,7 @@ class BasePredictor:
         self.args.half = self.model.fp16  # update half
         self.model.eval()
 
-    def write_results(self, i, p, im, s):
+    def write_results(self, i, p, im, s, frame_ind=None):
         """Write inference results to a file or directory."""
         string = ""  # print string
         if len(im.shape) == 3:
@@ -321,7 +329,15 @@ class BasePredictor:
             match = re.search(r"frame (\d+)/", s[i])
             frame = int(match.group(1)) if match else None  # 0 if frame undetermined
 
-        self.txt_path = self.save_dir / "labels" / (p.stem + ("" if self.dataset.mode == "image" else f"_{frame}"))
+        self.txt_path = (
+            self.save_dir / "labels" /
+            (p.stem +
+                (
+                    f"_{frame_ind}" if frame_ind is not None else
+                    ("" if self.dataset.mode == "image" else f"_{frame}")
+                )
+             )
+        )
         string += "%gx%g " % im.shape[2:]
         result = self.results[i]
         result.save_dir = self.save_dir.__str__()  # used in other locations

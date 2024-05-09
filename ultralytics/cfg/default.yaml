@@ -123,6 +123,10 @@ custom_crop: 0.5 # (float) probability for custom crop (crop based on certain cl
 crop_class_id: 1 # id of class to use for custom crop augmentation
 mosaic: 0.0
 
+frame_ind: 0  # just a utility when saving .txt files
+
+# save_dir: ...  # add custom location for save_dir
+
 # Custom config.yaml ---------------------------------------------------------------------------------------------------
 cfg: # (str, optional) for overriding defaults.yaml
 
