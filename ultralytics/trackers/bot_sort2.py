@@ -1,6 +1,8 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
+from pathlib import Path
 from collections import deque
+import traceback
 
 import numpy as np
 
@@ -17,6 +19,10 @@ from .utils.kalman_filter import KalmanFilterXYWH
 import ultralytics.trackers.feature_extraction as feature_extraction
 
 ENCODER = feature_extraction.TorchReIDFeatureExtractor
+
+# NOTE: this shouldn't be used, it will overwrite previous ( and other camera
+# possibly)
+DEFAULT_SAVE_DIR = 'runs/track/embeddings'
 
 # -----------------------------------------------------------------------------
 
@@ -191,7 +197,8 @@ class BOTSORT(BYTETracker):
 
     def __init__(self, args,
                  encoder=ENCODER,
-                 person_class_id=0,  frame_rate=30):
+                 person_class_id=0,frame_rate=30,
+                 save_dir=None):
         """Initialize YOLOv8 object with ReID module and GMC algorithm."""
         super().__init__(args, frame_rate)
         # ReID module
@@ -212,13 +219,16 @@ class BOTSORT(BYTETracker):
 
         self.person_class_id = person_class_id
 
+        self.save_dir = save_dir
+
         self.gmc = GMC(method=args.gmc_method)
 
     def get_kalmanfilter(self):
         """Returns an instance of KalmanFilterXYWH for object tracking."""
         return KalmanFilterXYWH()
 
-    def init_track(self, dets, scores, cls, img=None):
+    def init_track(self, dets, scores, cls,
+                   img=None, save_fname=None):
         """Initialize track with detections, scores, and classes."""
         if len(dets) == 0:
             return []
@@ -228,6 +238,9 @@ class BOTSORT(BYTETracker):
 
             # TODO: only extract needed features (person class id)
             features_keep = self.encoder.inference(img, dets)
+            # save embeddings?
+            if save_fname is not None:
+                np.save(save_fname, features_keep, allow_pickle=True)
             return [
                 BOTrack(xyxy, s, c, f) if ind in p_ids
                 else BOTrack(xyxy, s, c)
@@ -304,12 +317,32 @@ class BOTSORT(BYTETracker):
         super().reset()
         self.gmc.reset_params()
 
-    def update(self, results, img):
+    def update(self, results, img, res_obj=None):
         """
         Update tracker with new detections.
 
         This is overriden from super-class (ByteTracker) update() method.
         """
+        # check save_dir; we want to save the embeddings
+        if self.save_dir is None:
+            if res_obj is not None:
+                try:
+                    if res_obj.save_dir is None:
+                        path = res_obj.path
+                        save_dir_name = Path(path).stem
+                        self.save_dir = (
+                            Path(DEFAULT_SAVE_DIR).joinpath(save_dir_name)
+                        )
+                    else:
+                        save_dir_detector = res_obj.save_dir
+                        self.save_dir = Path(save_dir_detector, 'embeddings')
+                    self.save_dir.mkdir(mode=511, parents=True,
+                                        exist_ok=True)
+                except Exception:
+                    traceback.print_exc()
+                    # self.save_dir = DEFAULT_SAVE_DIR
+                    pass
+
         self.frame_id += 1
         activated_stracks = []
         refind_stracks = []
@@ -341,7 +374,13 @@ class BOTSORT(BYTETracker):
         # if self.args.with_reid:
         #     features_keep = self.encoder.inference(img, dets)
 
-        detections = self.init_track(dets, scores_keep, cls_keep, img)
+        if self.save_dir is not None:
+            fname = f'embedding_frame_{self.frame_id}.npy'
+            save_fname = Path(self.save_dir).joinpath(fname)
+        else:
+            save_fname = None
+        detections = self.init_track(dets, scores_keep, cls_keep,
+                                     img, save_fname=save_fname)
         # Add newly detected tracklets to tracked_stracks
         unconfirmed = []
         tracked_stracks = []  # type: list[STrack]
