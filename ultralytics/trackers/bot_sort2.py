@@ -219,7 +219,13 @@ class BOTSORT(BYTETracker):
 
         self.person_class_id = person_class_id
 
-        self.save_dir = save_dir
+        # save_dir: first check kwargs, then config file args (args)
+        try:
+            args_save_dir = args.save_dir
+        except Exception:
+            traceback.print_exc()
+            args_save_dir = None
+        self.save_dir = save_dir or args_save_dir
 
         self.gmc = GMC(method=args.gmc_method)
 
@@ -228,7 +234,9 @@ class BOTSORT(BYTETracker):
         return KalmanFilterXYWH()
 
     def init_track(self, dets, scores, cls,
-                   img=None, save_fname=None):
+                   img=None,
+                   features=None,
+                   save_features=False, save_fname=None):
         """Initialize track with detections, scores, and classes."""
         if len(dets) == 0:
             return []
@@ -237,10 +245,17 @@ class BOTSORT(BYTETracker):
             p_ids = np.nonzero(np.array(cls) == self.person_class_id)[0]
 
             # TODO: only extract needed features (person class id)
-            features_keep = self.encoder.inference(img, dets)
-            # save embeddings?
-            if save_fname is not None:
-                np.save(save_fname, features_keep, allow_pickle=True)
+            if features is None:
+                features_keep = self.encoder.inference(img, dets)
+            else:
+                features_keep = features
+            # save embeddings? don't save here since we will
+            # possibly discard some detections...
+            # if (
+            #     save_features and
+            #     (save_fname is not None)
+            # ):
+            #     np.save(save_fname, features_keep, allow_pickle=True)
             return [
                 BOTrack(xyxy, s, c, f) if ind in p_ids
                 else BOTrack(xyxy, s, c)
@@ -379,8 +394,27 @@ class BOTSORT(BYTETracker):
             save_fname = Path(self.save_dir).joinpath(fname)
         else:
             save_fname = None
+
+        save_only_high = False
+
+        # extract all features
+        features = self.encoder.inference(img, bboxes)
+
+        if True:  # not save_only_high:
+            if self.frame_id % 1 == 0:
+                print(f'\nSaving embeddings to: {save_fname}')
+            # save here (all features, even low-confidence)
+            # np.save(save_fname, features, allow_pickle=True)
+            # subset only high-conf. for init_track()
+            features_keep = features[remain_inds]
+        else:
+            features_keep = None
         detections = self.init_track(dets, scores_keep, cls_keep,
-                                     img, save_fname=save_fname)
+                                     img,
+                                     features=features_keep,
+                                     save_features=save_only_high,
+                                     save_fname=save_fname)
+
         # Add newly detected tracklets to tracked_stracks
         unconfirmed = []
         tracked_stracks = []  # type: list[STrack]
@@ -421,7 +455,11 @@ class BOTSORT(BYTETracker):
                 refind_stracks.append(track)
 
         # Step 3: Second association, with low score detection boxes association the untrack to the low score detections
-        detections_second = self.init_track(dets_second, scores_second, cls_second, img)
+        features_second = features[inds_second]
+        detections_second = self.init_track(
+            dets_second, scores_second, cls_second, img,
+            features=features_second,
+        )
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
         # TODO
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
@@ -477,5 +515,22 @@ class BOTSORT(BYTETracker):
         self.removed_stracks.extend(removed_stracks)
         if len(self.removed_stracks) > 1000:
             self.removed_stracks = self.removed_stracks[-999:]  # clip remove stracks to 1000 maximum
+
+        # save features here !
+        # get current feature for every track that is left after all above
+        # steps
+        try:
+            features_save = np.asarray(
+                [x.curr_feat
+                 # if x.curr_feat is not None
+                 # should not be necessary but leave this
+                 # else self.encoder.inference(img, [x.tlwh])
+                 for x in self.tracked_stracks if x.is_activated
+                 and x.curr_feat is not None]
+            )
+        except ValueError:
+            print(sum([x.curr_feat is None for x in self.tracked_stracks
+                  if x.is_activated]), ' None features. Please check.')
+        np.save(save_fname, features_save, allow_pickle=True)
 
         return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
