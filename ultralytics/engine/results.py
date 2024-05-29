@@ -379,11 +379,13 @@ class Results(SimpleClass):
         if self.obb is not None:
             LOGGER.warning("WARNING ⚠️ OBB task do not support `save_crop`.")
             return
-        for d in self.boxes:
+        for ind, d in enumerate(self.boxes):
+            # save each detection crop
+            fname = f"{Path(file_name)}_det{ind}.jpg"
             save_one_box(
                 d.xyxy,
                 self.orig_img.copy(),
-                file=Path(save_dir) / self.names[int(d.cls)] / f"{Path(file_name)}.jpg",
+                file=Path(save_dir) / self.names[int(d.cls)] / fname,
                 BGR=True,
             )
 
