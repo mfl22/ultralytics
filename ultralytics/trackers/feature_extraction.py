@@ -44,7 +44,7 @@ class FeatureExtractorClass:
         """
         features = self.extractor(image)
 
-        return features
+        return features.cpu()
 
     def inference(self, img, dets):
         """
